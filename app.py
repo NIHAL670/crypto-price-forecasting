@@ -10,6 +10,8 @@ import numpy as np
 import yfinance as yf
 import matplotlib.pyplot as plt
 from tensorflow.keras.models import load_model
+
+from forecast import model_look_back, recursive_forecast
 from sklearn.preprocessing import MinMaxScaler
 from datetime import date, timedelta
 import streamlit.components.v1 as components
@@ -772,15 +774,14 @@ div.stButton > button:hover {
     end_date = st.date_input("To Date", value=date.today())
 
 
-    prediction_days = 7
-
-
     show_prediction = True
 
     interval = st.selectbox(
         "Prediction Interval",
-        ["1 Day", "7 Days", "30 Days"]
+        ["1 Day", "7 Days", "30 Days"],
+        index=1,
     )
+    prediction_days = {"1 Day": 1, "7 Days": 7, "30 Days": 30}[interval]
     launch_date = COIN_LAUNCH_DATES.get(crypto)
 
     if start_date < launch_date:
@@ -972,24 +973,17 @@ div.stButton > button:hover {
         st.error(f"❌ Model not found: {model_path}")
         st.stop()
 
-    # ---------------- PREPARE INPUT ----------------
-    look_back = 60
-    X_test = []
-
-    for i in range(look_back, len(scaled_data)):
-        X_test.append(scaled_data[i - look_back:i])
-
-    X_test = np.array(X_test)
-    # X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
-    if len(data) < 60:
-        st.error("Not enough historical data for LSTM prediction.")
+    # ---------------- FORECAST ----------------
+    # Each model was trained on a fixed window (BTC: 15 days, others: 60 days).
+    look_back = model_look_back(model)
+    if len(scaled_data) < look_back:
+        st.error(f"Not enough historical data: this model needs at least {look_back} days.")
         st.stop()
 
-    # ---------------- PREDICTION ----------------
-    predicted_scaled = model.predict(X_test)
-    predicted_prices = scaler.inverse_transform(predicted_scaled).flatten()
+    # Recursive multi-step forecast: predict tomorrow, feed it back in, repeat.
+    future_scaled = recursive_forecast(model, scaled_data, prediction_days, look_back)
+    future_predictions = scaler.inverse_transform(future_scaled.reshape(-1, 1)).flatten()
 
-    # ---------------- FUTURE DATES ----------------
     last_date = data.index[-1]
     future_dates = pd.date_range(
         start=last_date,
@@ -997,23 +991,26 @@ div.stButton > button:hover {
         freq="D"
     )[1:]
 
-    future_predictions = predicted_prices[-prediction_days:]
-
     # ---------------- PLOT ----------------
     st.markdown("<h2 style='color:#FF4B4B;'>📈 Price Trend </h2>",
                 unsafe_allow_html=True)
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(future_dates, future_predictions, marker="o", label="Predicted Price")
-    ax.set_title(f"{crypto} Future Price Prediction")
+    recent = data["Close"].iloc[-60:]
+    ax.plot(recent.index, np.asarray(recent).flatten(), label="Actual (last 60 days)")
+    ax.plot(
+        [recent.index[-1]] + list(future_dates),
+        [float(np.asarray(recent).flatten()[-1])] + list(future_predictions),
+        marker="o", linestyle="--", label=f"Forecast (next {prediction_days} day{'s' if prediction_days > 1 else ''})",
+    )
+    ax.set_title(f"{crypto} Price Forecast")
     ax.set_xlabel("Date")
     ax.set_ylabel("Price (USD)")
     ax.legend()
     st.pyplot(fig)
     # ---------------- FINAL FUTURE PREDICTED PRICE ----------------
     final_predicted_price = float(future_predictions[-1])
-    # ---------------- FINAL FUTURE PREDICTED PRICE ----------------
-    final_predicted_price = float(future_predictions[-1])
+    current_price = float(current_price)
 
     trend = "UP 📈" if final_predicted_price > current_price else "DOWN 📉"
     trend_color = "#00ff99" if trend.startswith("UP") else "#ff5252"
@@ -1044,14 +1041,6 @@ div.stButton > button:hover {
         """,
         height=220,
     )
-
-    # ---------------- FINAL PRICE ----------------
-    future_price = float(predicted_prices[-1])
-
-    # ---------------- TREND DIRECTION ----------------
-    future_price = float(predicted_prices[-1])
-    current_price = float(current_price)
-
 
     # ---------------- EXPORT ----------------
     export_df = pd.DataFrame({
