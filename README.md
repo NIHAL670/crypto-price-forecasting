@@ -35,8 +35,8 @@ During the internship this LSTM was benchmarked against **GRU, Random Forest and
 ## Quick start
 
 ```bash
-git clone https://github.com/NIHAL670/cryptop_prediction_model.git
-cd cryptop_prediction_model
+git clone https://github.com/NIHAL670/crypto-price-forecasting.git
+cd crypto-price-forecasting
 pip install -r requirements.txt
 streamlit run app.py
 ```
