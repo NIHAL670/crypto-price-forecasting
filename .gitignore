@@ -1,0 +1,5 @@
+users.db
+feedback.csv
+__pycache__/
+*.pyc
+.env
